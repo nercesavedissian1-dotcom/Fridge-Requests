@@ -113,11 +113,16 @@ with connect() as c:
  c.execute('CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, name TEXT NOT NULL COLLATE NOCASE UNIQUE, quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity>=0), version INTEGER NOT NULL DEFAULT 0)')
  c.execute('CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, employee TEXT NOT NULL, createdAt TEXT NOT NULL, items TEXT NOT NULL, notes TEXT NOT NULL)')
  c.execute('CREATE TABLE IF NOT EXISTS stock_movements (id TEXT PRIMARY KEY, token TEXT NOT NULL, item_id INTEGER NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL, createdAt TEXT NOT NULL, kind TEXT NOT NULL, delta INTEGER NOT NULL, before_qty INTEGER NOT NULL, after_qty INTEGER NOT NULL, branch TEXT NOT NULL, employee TEXT NOT NULL, note TEXT NOT NULL, reference TEXT NOT NULL, UNIQUE(token,item_id))')
+ c.execute('BEGIN IMMEDIATE')
+ if 'active' not in {r['name'] for r in c.execute('PRAGMA table_info(inventory)')}:c.execute('ALTER TABLE inventory ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
+ # Retain original rows and historical references; retire only empty, unsplit products.
+ for name in ['Buz Tin','Buz 10%','Ice Coffee']:
+  c.execute("UPDATE inventory SET active=0 WHERE category='Drinks' AND name=? AND quantity=0",(name,))
  for category,names in CATALOG.items():
   for name in names:c.execute('INSERT OR IGNORE INTO inventory(category,name) VALUES (?,?)',(category,name))
 
 def now():return datetime.now(ZoneInfo('UTC')).isoformat()
-def inventory_rows(c):return [dict(r) for r in c.execute('SELECT * FROM inventory ORDER BY id')]
+def inventory_rows(c):return [dict(r) for r in c.execute('SELECT * FROM inventory WHERE active=1 ORDER BY id')]
 def catalog_data():
  with connect() as c:
   rows=inventory_rows(c)
@@ -157,10 +162,10 @@ def update_stock():
    if not isinstance(category,str) or category not in CATALOG or not isinstance(name,str) or not name.strip() or len(name.strip())>100:return jsonify(error='Choose a category and enter the new item name.'),400
    if c.execute('SELECT 1 FROM inventory WHERE name=?',(name.strip(),)).fetchone():return jsonify(error='This item already exists. Use Add delivery instead.'),409
    cur=c.execute('INSERT INTO inventory(category,name,quantity) VALUES (?,?,?)',(category,name.strip(),qty))
-   row=c.execute('SELECT * FROM inventory WHERE id=?',(cur.lastrowid,)).fetchone();before=0;after=qty;kind='New item'
+   row=c.execute('SELECT * FROM inventory WHERE id=? AND active=1',(cur.lastrowid,)).fetchone();before=0;after=qty;kind='New item'
   else:
    if type(b.get('id')) is not int:return jsonify(error='Choose an item.'),400
-   row=c.execute('SELECT * FROM inventory WHERE id=?',(b['id'],)).fetchone()
+   row=c.execute('SELECT * FROM inventory WHERE id=? AND active=1',(b['id'],)).fetchone()
    if not row:return jsonify(error='Item not found.'),404
    before=row['quantity'];after=before+qty if action=='add' else qty
    if action=='set' and b.get('version')!=row['version']:return jsonify(error='Stock changed while you were editing. Refresh and check the current balance.'),409
@@ -183,7 +188,7 @@ def collect_stock():
   seen=set();selected=[]
   for i in items:
    if not isinstance(i,dict) or not isinstance(i.get('name'),str) or not isinstance(i.get('category'),str) or type(i.get('quantity')) is not int or not 1<=i['quantity']<=999 or i['name'].casefold() in seen:return jsonify(error='Check selected items and whole quantities (1–999).'),400
-   row=c.execute('SELECT * FROM inventory WHERE name=? AND category=?',(i['name'],i['category'])).fetchone()
+   row=c.execute('SELECT * FROM inventory WHERE name=? AND category=? AND active=1',(i['name'],i['category'])).fetchone()
    if not row:return jsonify(error='One of the items is no longer available. Refresh the list.'),400
    if i['quantity']>row['quantity']:return jsonify(error=f"Not enough {row['name']}: {row['quantity']} available. Nothing was deducted."),409
    seen.add(i['name'].casefold());selected.append((row,i['quantity']))

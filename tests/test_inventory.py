@@ -51,4 +51,22 @@ class StockTests(unittest.TestCase):
   self.assertEqual(self.public.get('/api/stock').status_code,401);self.assertEqual(self.public.post('/api/stock',json={}).status_code,401)
   for qty in [-1,0,1.5,True]:self.assertEqual(self.public.post('/api/collections',json=self.payload(quantity=qty)).status_code,400)
   self.assertEqual(self.update(-1).status_code,400)
+class VariantTests(StockTests):
+ def test_variants_and_legacy_migration(self):
+  with self.m.connect() as c:
+   c.execute("INSERT INTO inventory(category,name,quantity) VALUES ('Drinks','Buz Tin',0)")
+   c.execute("INSERT INTO inventory(category,name,quantity) VALUES ('Drinks','Ice Coffee',0)")
+  spec=importlib.util.spec_from_file_location('stock_app_reloaded',ROOT/'app.py');updated=importlib.util.module_from_spec(spec);spec.loader.exec_module(updated)
+  client=updated.app.test_client();cat=client.get('/api/catalog').json['catalog']
+  for name in ['Buz Tin Red','Buz Tin Yellow','Buz 10% White','Buz 10% Yellow','Ice Coffee Red','Ice Coffee Black']:self.assertIn(name,cat['Drinks'])
+  for name in ['Buz Tin','Buz 10%','Ice Coffee']:self.assertNotIn(name,cat['Drinks'])
+  self.assertEqual(sum(len(v) for v in cat.values()),49)
+  self.assertEqual(cat['Snacks'][-3:],['Sandwich Wafer Red','Sandwich Wafer Blue','Sandwich Wafer Black'])
+  self.assertTrue(any(r['id']=='legacy' for r in self.owner.get('/api/requests').json))
+  a=self.item('Ice Coffee Red');b=self.item('Ice Coffee Black')
+  for i,q in [(a,2),(b,5)]:self.assertEqual(self.owner.post('/api/stock',json={'action':'set','id':i['id'],'version':i['version'],'quantity':q,'token':self.m.secrets.token_hex(16)}).status_code,200)
+  payload=self.payload();payload['items']=[{'name':'Ice Coffee Red','category':'Drinks','quantity':1}]
+  self.assertEqual(client.post('/api/collections',json=payload).status_code,201)
+  self.assertEqual(self.item('Ice Coffee Red')['quantity'],1);self.assertEqual(self.item('Ice Coffee Black')['quantity'],5)
+
 if __name__=='__main__':unittest.main()
