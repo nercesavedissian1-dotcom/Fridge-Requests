@@ -1,0 +1,1 @@
+{"name":"fridge-requests-ui","private":true,"version":"1.0.0","type":"module","scripts":{"build":"vite build"},"dependencies":{"react":"19.2.6","react-dom":"19.2.6","lucide-react":"^1.31.0"},"devDependencies":{"vite":"8.0.13","typescript":"5.9.3"}}
