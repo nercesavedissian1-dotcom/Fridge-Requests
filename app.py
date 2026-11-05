@@ -23,6 +23,10 @@ def connect():
 with connect() as c:
  c.execute('PRAGMA journal_mode=WAL')
  c.execute('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, branch TEXT NOT NULL, employee TEXT NOT NULL, createdAt TEXT NOT NULL, items TEXT NOT NULL, notes TEXT NOT NULL)')
+ c.execute('BEGIN IMMEDIATE')
+ columns={r['name'] for r in c.execute('PRAGMA table_info(requests)')}
+ if 'status' not in columns:c.execute("ALTER TABLE requests ADD COLUMN status TEXT NOT NULL DEFAULT 'Pending'")
+ if 'decidedAt' not in columns:c.execute("ALTER TABLE requests ADD COLUMN decidedAt TEXT NOT NULL DEFAULT ''")
 
 @app.before_request
 def same_origin():
@@ -48,7 +52,7 @@ def logout():session.clear();return jsonify(ok=True)
 def history():
  if not session.get('owner'):return jsonify(error='Owner login required.'),401
  with connect() as c:
-  rows=[{**dict(r),'type':'Request'} for r in c.execute('SELECT * FROM requests')] + [{**dict(r),'type':'Taken from stock'} for r in c.execute('SELECT * FROM collections')]
+  rows=[{**dict(r),'type':'Request'} for r in c.execute('SELECT * FROM requests')] + [{**dict(r),'type':'Taken from stock','status':'Collected','decidedAt':''} for r in c.execute('SELECT * FROM collections')]
  return jsonify([{**r,'items':json.loads(r['items'])} for r in sorted(rows,key=lambda r:r['createdAt'],reverse=True)])
 
 @app.post('/api/requests')
@@ -63,29 +67,29 @@ def submit():
   if not isinstance(i,dict) or not isinstance(i.get('category'),str) or i.get('category') not in catalog or not isinstance(i.get('name'),str) or i.get('name') not in catalog[i['category']] or type(i.get('quantity')) is not int or not 1<=i['quantity']<=999 or i['name'] in seen:return jsonify(error='Check your selected items and quantities (1–999).'),400
   seen.add(i['name'])
  id=secrets.token_hex(16);created=datetime.now(ZoneInfo('UTC')).isoformat()
- with connect() as c:c.execute('INSERT INTO requests VALUES (?,?,?,?,?,?)',(id,branch,employee.strip(),created,json.dumps(items),notes.strip()))
- return jsonify(id=id,createdAt=created),201
+ with connect() as c:c.execute('INSERT INTO requests (id,branch,employee,createdAt,items,notes) VALUES (?,?,?,?,?,?)',(id,branch,employee.strip(),created,json.dumps(items),notes.strip()))
+ return jsonify(id=id,createdAt=created,status='Pending'),201
 
 @app.get('/api/export')
 def export():
  if not session.get('owner'):return jsonify(error='Owner login required.'),401
  with connect() as c:
-  rows=[{**dict(r),'type':'Request'} for r in c.execute('SELECT * FROM requests')] + [{**dict(r),'type':'Taken from stock'} for r in c.execute('SELECT * FROM collections')]
+  rows=[{**dict(r),'type':'Request'} for r in c.execute('SELECT * FROM requests')] + [{**dict(r),'type':'Taken from stock','status':'Collected','decidedAt':''} for r in c.execute('SELECT * FROM collections')]
   stock=inventory_rows(c);movements=[dict(r) for r in c.execute('SELECT * FROM stock_movements ORDER BY createdAt DESC')]
  rows.sort(key=lambda r:r['createdAt'],reverse=True)
  wb=Workbook();wb.remove(wb.active)
  for branch in BRANCHES:
-  ws=wb.create_sheet(branch);ws.append(['Date (Beirut)','Employee','Branch','Category','Item','Quantity','Notes','Request ID','Type'])
+  ws=wb.create_sheet(branch);ws.append(['Date (Beirut)','Employee','Branch','Category','Item','Quantity','Notes','Request ID','Type','Status','Decision date (Beirut)'])
   for r in rows:
    if r['branch']!=branch:continue
    for i in json.loads(r['items']):
-    vals=[datetime.fromisoformat(r['createdAt']).astimezone(ZoneInfo('Asia/Beirut')).strftime('%d/%m/%Y %H:%M'),r['employee'],branch,i['category'],i['name'],i['quantity'],r['notes'],r['id'],r['type']]
+    vals=[datetime.fromisoformat(r['createdAt']).astimezone(ZoneInfo('Asia/Beirut')).strftime('%d/%m/%Y %H:%M'),r['employee'],branch,i['category'],i['name'],i['quantity'],r['notes'],r['id'],r['type'],r['status'],datetime.fromisoformat(r['decidedAt']).astimezone(ZoneInfo('Asia/Beirut')).strftime('%d/%m/%Y %H:%M') if r['decidedAt'] else '']
     ws.append(vals)
     for cell in ws[ws.max_row]:
      if isinstance(cell.value,str):cell.data_type='s'
   for cell in ws[1]:cell.font=Font(bold=True);cell.fill=PatternFill('solid',fgColor='DCEDE6')
   ws.freeze_panes='A2';ws.auto_filter.ref=ws.dimensions
-  for col,width in zip('ABCDEFGHI',[23,25,23,18,34,12,45,36,24]):ws.column_dimensions[col].width=width
+  for col,width in zip('ABCDEFGHIJK',[23,25,23,18,34,12,45,36,24,18,26]):ws.column_dimensions[col].width=width
  ws=wb.create_sheet('Shared Stock');ws.append(['Category','Item','Current Quantity'])
  for r in stock:ws.append([r['category'],r['name'],r['quantity']])
  ws=wb.create_sheet('Stock Movements');ws.append(['Date (Beirut)','Item','Category','Action','Change','Before','After','Branch','Employee','Note','Reference'])
@@ -108,7 +112,7 @@ def index():return send_from_directory(app.static_folder,'index.html')
 def too_large(e):return jsonify(error='Request is too large.'),413
 
 
-# Shared inventory is separate from requests: only recorded collections deduct stock.
+# Shared inventory changes only when the owner accepts a request.
 with connect() as c:
  c.execute('CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, name TEXT NOT NULL COLLATE NOCASE UNIQUE, quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity>=0), version INTEGER NOT NULL DEFAULT 0)')
  c.execute('CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, employee TEXT NOT NULL, createdAt TEXT NOT NULL, items TEXT NOT NULL, notes TEXT NOT NULL)')
@@ -177,25 +181,32 @@ def update_stock():
 
 @app.post('/api/collections')
 def collect_stock():
+ # Old tabs must not bypass owner approval.
+ return jsonify(error='Direct collections are no longer available. Submit a request for owner approval.'),410
+
+@app.post('/api/requests/<request_id>/decision')
+def decide_request(request_id):
+ if not session.get('owner'):return jsonify(error='Owner login required.'),401
  b=request.get_json(silent=True)
- if not isinstance(b,dict):return jsonify(error='Invalid collection.'),400
- items=b.get('items');employee=b.get('employee');branch=b.get('branch');notes=b.get('notes','');token=b.get('token')
- if not isinstance(branch,str) or branch not in BRANCHES or not isinstance(employee,str) or not employee.strip() or len(employee)>100 or not isinstance(notes,str) or len(notes)>1000 or not isinstance(items,list) or not 1<=len(items)<=500 or not isinstance(token,str) or not 16<=len(token)<=100:return jsonify(error='Check your branch, name and selected items.'),400
+ if not isinstance(b,dict) or b.get('action') not in ['accept','refuse']:return jsonify(error='Choose Accept or Refuse.'),400
+ status='Accepted' if b['action']=='accept' else 'Refused'
  with connect() as c:
   c.execute('BEGIN IMMEDIATE')
-  previous=c.execute('SELECT id,createdAt FROM collections WHERE token=?',(token,)).fetchone()
-  if previous:return jsonify(**dict(previous),replayed=True)
-  seen=set();selected=[]
-  for i in items:
-   if not isinstance(i,dict) or not isinstance(i.get('name'),str) or not isinstance(i.get('category'),str) or type(i.get('quantity')) is not int or not 1<=i['quantity']<=999 or i['name'].casefold() in seen:return jsonify(error='Check selected items and whole quantities (1–999).'),400
-   row=c.execute('SELECT * FROM inventory WHERE name=? AND category=? AND active=1',(i['name'],i['category'])).fetchone()
-   if not row:return jsonify(error='One of the items is no longer available. Refresh the list.'),400
-   if i['quantity']>row['quantity']:return jsonify(error=f"Not enough {row['name']}: {row['quantity']} available. Nothing was deducted."),409
-   seen.add(i['name'].casefold());selected.append((row,i['quantity']))
-  id=secrets.token_hex(16);created=now();clean=[{'name':r['name'],'category':r['category'],'quantity':q} for r,q in selected]
-  c.execute('INSERT INTO collections VALUES (?,?,?,?,?,?,?)',(id,token,branch,employee.strip(),created,json.dumps(clean),notes.strip()))
-  for row,q in selected:
-   after=row['quantity']-q
-   c.execute('UPDATE inventory SET quantity=?,version=version+1 WHERE id=?',(after,row['id']))
-   movement(c,token,row,'Branch collection',-q,row['quantity'],after,branch,employee.strip(),notes.strip(),id)
- return jsonify(id=id,createdAt=created),201
+  req=c.execute('SELECT * FROM requests WHERE id=?',(request_id,)).fetchone()
+  if not req:return jsonify(error='Request not found.'),404
+  if req['status']==status:return jsonify(ok=True,status=status,decidedAt=req['decidedAt'],replayed=True)
+  if req['status']!='Pending':return jsonify(error=f"This request has already been {req['status'].lower()}. Refresh the list."),409
+  if status=='Accepted':
+   selected=[]
+   for item in json.loads(req['items']):
+    row=c.execute('SELECT * FROM inventory WHERE name=? AND category=? AND active=1',(item['name'],item['category'])).fetchone()
+    if not row:return jsonify(error=f"{item['name']} is no longer selectable. Refuse this request and ask the branch to submit the separate item."),409
+    if row['quantity']<item['quantity']:return jsonify(error=f"Not enough {row['name']}: {row['quantity']} available, {item['quantity']} requested. Nothing was deducted."),409
+    selected.append((row,item['quantity']))
+   for row,qty in selected:
+    after=row['quantity']-qty
+    c.execute('UPDATE inventory SET quantity=?,version=version+1 WHERE id=?',(after,row['id']))
+    movement(c,'request:'+request_id,row,'Accepted request',-qty,row['quantity'],after,req['branch'],req['employee'],req['notes'],request_id)
+  decided=now()
+  c.execute('UPDATE requests SET status=?,decidedAt=? WHERE id=?',(status,decided,request_id))
+ return jsonify(ok=True,status=status,decidedAt=decided)
