@@ -12,7 +12,7 @@ app=Flask(__name__,static_folder='static',static_url_path='')
 app.wsgi_app=ProxyFix(app.wsgi_app,x_proto=1,x_host=1)
 app.secret_key=os.environ.get('SESSION_SECRET') or secrets.token_hex(32)
 app.config.update(MAX_CONTENT_LENGTH=65536,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.environ.get('RAILWAY_ENVIRONMENT_NAME') is not None)
-BRANCHES=['Bayada','Badaro','Bourj Hammoud','Dekwene']
+BRANCHES=['Bayada','Badaro','Bourj Hammoud','Dekwene','Main Office Mano']
 CATALOG=json.loads((ROOT/'catalog.json').read_text())
 DATA=Path(os.environ.get('DATA_DIR',str(ROOT/'data')));DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/'requests.db'
