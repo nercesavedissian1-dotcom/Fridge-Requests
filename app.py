@@ -213,3 +213,40 @@ def decide_request(request_id):
   decided=now()
   c.execute('UPDATE requests SET status=?,decidedAt=? WHERE id=?',(status,decided,request_id))
  return jsonify(ok=True,status=status,decidedAt=decided)
+
+# Bourj Hammoud fridge counts are separate from shared warehouse stock.
+with connect() as c:
+ c.execute('CREATE TABLE IF NOT EXISTS fridge_counts (week TEXT PRIMARY KEY, counts TEXT NOT NULL, revision INTEGER NOT NULL)')
+
+@app.route('/api/fridge-counts/<week>',methods=['GET','POST'])
+def fridge_counts(week):
+ if not session.get('owner'):
+  return jsonify(error='Owner login required.'),401
+ try:
+  monday=datetime.strptime(week,'%Y-%m-%d')
+  if monday.weekday()!=0 or monday.strftime('%Y-%m-%d')!=week:
+   raise ValueError()
+ except ValueError:
+  return jsonify(error='Select a Monday to start the week.'),400
+ with connect() as c:
+  if request.method=='POST':
+   c.execute('BEGIN IMMEDIATE')
+  row=c.execute('SELECT counts,revision FROM fridge_counts WHERE week=?',(week,)).fetchone()
+  revision=row['revision'] if row else 0
+  if request.method=='GET':
+   return jsonify(counts=json.loads(row['counts']) if row else {},revision=revision)
+  body=request.get_json(silent=True)
+  if not isinstance(body,dict) or not isinstance(body.get('counts'),dict) or type(body.get('revision')) is not int:
+   return jsonify(error='Invalid fridge counts.'),400
+  if body['revision']!=revision:
+   return jsonify(error='These counts changed. Reload the week before saving again.'),409
+  names={item['name'] for item in inventory_rows(c)}
+  counts=body['counts']
+  for name,count in counts.items():
+   if name not in names or not isinstance(count,list) or len(count)!=2 or any(
+    value is not None and (type(value) is not int or not 0<=value<=1000000) for value in count
+   ):
+    return jsonify(error='Enter whole counts of zero or more for active items.'),400
+  c.execute('INSERT INTO fridge_counts VALUES (?,?,?) ON CONFLICT(week) DO UPDATE SET counts=excluded.counts,revision=excluded.revision',
+   (week,json.dumps(counts),revision+1))
+ return jsonify(revision=revision+1)

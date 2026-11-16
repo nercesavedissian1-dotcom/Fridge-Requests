@@ -1,4 +1,5 @@
 import {useState} from 'react';
+import FridgeSales from './FridgeSales';
 
 type RequestRow = {
  branch: string;
@@ -63,7 +64,7 @@ export function summarize(rows: RequestRow[], start: number) {
  return {totals, categories: groups};
 }
 
-export default function WeeklyBranchSummary({rows}: {rows: RequestRow[]}) {
+export default function WeeklyBranchSummary({rows, catalog}: {rows: RequestRow[]; catalog: Record<string,string[]>}) {
  const [weeksBack, setWeeksBack] = useState(0);
  const start = weekStart(new Date()) - weeksBack * 7 * day;
  const {totals, categories} = summarize(rows, start);
@@ -88,5 +89,7 @@ export default function WeeklyBranchSummary({rows}: {rows: RequestRow[]}) {
      </tr>)}
     </tbody>)}
    </table></div>}
+  <FridgeSales key={start} week={new Date(start).toISOString().slice(0,10)}
+   catalog={catalog} restocks={Object.fromEntries(categories.flatMap(group => group.items.map(item => [item.name,item.taken])))} />
  </section>;
 }
