@@ -13,6 +13,21 @@ const prices: Record<string,number> = {
  'Sandwich Wafer Blue':40000, 'Sandwich Wafer Black':40000,
 };
 const number = new Intl.NumberFormat('en-GB');
+const unitsPerRequest: Record<string,number> = {
+ Rex:24, Almaza:24, 'Almaza 250 ml':24,
+ Pepsi:24, '7Up':24, Mirinda:24, 'Dark Blue':24, 'Red Bull':24,
+ Water:12, 'Ice Tea':6, 'Ice Coffee Red':24, 'Ice Coffee Black':24,
+ 'Buz 10% White':6, 'Buz 10% Yellow':6, 'Buz Tin Red':6, 'Buz Tin Yellow':6,
+ Snickers:24, Mars:24, Bounty:24, 'Choco Prince':24, Twix:24,
+ 'Sandwich Wafer Red':24, 'Sandwich Wafer Blue':24, 'Sandwich Wafer Black':24,
+};
+
+export function countRestocked(category:string, name:string, requestedUnits:number) {
+ if(requestedUnits===0)return 0;
+ const multiplier=category==='Cigarettes'?10:unitsPerRequest[name];
+ return Number.isInteger(multiplier)?requestedUnits*multiplier:null;
+}
+
 type Counts = Record<string,[number|null,number|null]>;
 type Props = {week:string; catalog:Record<string,string[]>; restocks:Record<string,number>};
 
@@ -46,8 +61,9 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
  }
  const groups=Object.entries(catalog).map(([category,names])=>({category,items:names.map(name=>{
   const [opening,closing]=counts[name]??[null,null];
-  const restock=restocks[name]??0, price=Object.hasOwn(prices,name)?prices[name]:undefined;
-  const difference=opening===null||closing===null?null:opening+restock-closing;
+  const restock=countRestocked(category,name,restocks[name]??0);
+  const price=Object.hasOwn(prices,name)?prices[name]:undefined;
+  const difference=opening===null||closing===null||restock===null?null:opening+restock-closing;
   const sold=difference===null||difference<0?null:difference;
   return {name,opening,closing,restock,price,sold,value:sold===null||price===undefined?null:sold*price,invalid:difference!==null&&difference<0};
  })}));
@@ -56,12 +72,13 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
  const sold=(items:typeof all)=>items.reduce((sum,item)=>sum+(item.sold??0),0);
  return <details style={{marginTop:20}}>
   <summary><strong>Fridge Sales</strong></summary>
-  <p>Enter opening and closing counts for this week. Accepted requests are restocks. Sales value uses selling prices in LBP.</p>
+  <p>Enter opening and closing counts in individual cigarette packs, drinks, or snacks. Restocked counts convert units taken by Bourj Hammoud into individual items.</p>
   <form onSubmit={save}>
    <p><strong>{number.format(sold(all))} units sold · {number.format(revenue(all))} LBP in priced sales</strong></p>
    <p>Totals use items with both counts entered. Sales value is incomplete when a sold item has no price.</p>
+   {all.some(item=>item.restock===null)&&<p>Items marked “Pack size needed” are excluded from sales totals until their request unit is known.</p>}
    <div className="tablewrap"><table>
-    <thead><tr>{['Item','Opening','Restocked','Closing','Sold','Price (LBP)','Sales (LBP)'].map(title=><th key={title} scope="col">{title}</th>)}</tr></thead>
+    <thead><tr>{['Item','Opening count','Restocked (individual)','Closing count','Sold','Price (LBP)','Sales (LBP)'].map(title=><th key={title} scope="col">{title}</th>)}</tr></thead>
     {groups.map(({category,items})=><tbody key={category}>
      <tr><th scope="rowgroup" colSpan={4}>{category} total</th><td><strong>{number.format(sold(items))}</strong></td><td></td><td><strong>{number.format(revenue(items))}</strong></td></tr>
      {items.map(item=><tr key={item.name}>
@@ -90,10 +107,10 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
 }
 
 function FragmentInput({field,name,value,disabled,restock,onChange}:{
- field:string;name:string;value:number|null;disabled:boolean;restock?:number;onChange:(value:number|null)=>void;
+ field:string;name:string;value:number|null;disabled:boolean;restock?:number|null;onChange:(value:number|null)=>void;
 }){
  return <><td><input type="number" min={0} max={1000000} step={1} style={{width:85}}
   aria-label={field+' count for '+name} value={value??''} disabled={disabled}
   onChange={event=>onChange(event.target.value===''?null:event.target.valueAsNumber)}/></td>
-  {restock!==undefined&&<td>{number.format(restock)}</td>}</>;
+  {restock!==undefined&&<td>{restock===null?'Pack size needed':number.format(restock)}</td>}</>;
 }
