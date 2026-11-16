@@ -1,4 +1,3 @@
-import {useState} from 'react';
 import FridgeSales from './FridgeSales';
 
 type RequestRow = {
@@ -64,18 +63,32 @@ export function summarize(rows: RequestRow[], start: number) {
  return {totals, categories: groups};
 }
 
-export default function WeeklyBranchSummary({rows, catalog}: {rows: RequestRow[]; catalog: Record<string,string[]>}) {
- const [weeksBack, setWeeksBack] = useState(0);
+export default function BourjHammoudReport({rows, catalog, view, weeksBack, setWeeksBack, onLoginRequired}: {
+ rows: RequestRow[];
+ catalog: Record<string,string[]>;
+ view: 'weekly'|'fridge';
+ weeksBack: number;
+ setWeeksBack: (weeks: number) => void;
+ onLoginRequired: () => void;
+}) {
  const start = weekStart(new Date()) - weeksBack * 7 * day;
  const {totals, categories} = summarize(rows, start);
- return <section className="identity stocktable weekly-summary" aria-label="Bourj Hammoud weekly summary">
-  <h2>Bourj Hammoud weekly summary</h2>
-  <p>Monday through Sunday in Beirut time. Requests count on the day submitted. Units taken count on the day stock was deducted.</p>
+ return <section className="identity stocktable weekly-summary" aria-label={view==='weekly'?'Weekly summary':'Fridge counts'}>
   <div className="weekly-controls">
    <button type="button" className="refresh" onClick={() => setWeeksBack(weeksBack + 1)}>Previous week</button>
    <strong aria-live="polite">{label.format(start)} – {label.format(start + 6 * day)}</strong>
    <button type="button" className="refresh" disabled={weeksBack === 0} onClick={() => setWeeksBack(weeksBack - 1)}>Next week</button>
   </div>
+  {view==='weekly'?<WeeklyBranchSummary totals={totals} categories={categories}/>:<FridgeSales
+   key={start} week={new Date(start).toISOString().slice(0,10)} catalog={catalog}
+   restocks={Object.fromEntries(categories.flatMap(group=>group.items.map(item=>[item.name,item.taken])))}
+   onLoginRequired={onLoginRequired}/>}
+ </section>;
+}
+
+function WeeklyBranchSummary({totals,categories}:ReturnType<typeof summarize>) {
+ return <>
+  <p>Requests count on the day submitted. Units taken count on the day stock was deducted. Dates use Beirut time.</p>
   <p>{totals.Pending + totals.Accepted + totals.Refused} requests · {totals.Pending} pending · {totals.Accepted} accepted · {totals.Refused} refused</p>
   {categories.length === 0 ? <p>No requests or stock deductions this week.</p> :
    <div className="tablewrap"><table>
@@ -89,7 +102,5 @@ export default function WeeklyBranchSummary({rows, catalog}: {rows: RequestRow[]
      </tr>)}
     </tbody>)}
    </table></div>}
-  <FridgeSales key={start} week={new Date(start).toISOString().slice(0,10)}
-   catalog={catalog} restocks={Object.fromEntries(categories.flatMap(group => group.items.map(item => [item.name,item.taken])))} />
- </section>;
+ </>;
 }

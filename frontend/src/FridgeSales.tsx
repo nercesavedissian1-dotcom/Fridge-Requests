@@ -29,9 +29,9 @@ export function countRestocked(category:string, name:string, requestedUnits:numb
 }
 
 type Counts = Record<string,[number|null,number|null]>;
-type Props = {week:string; catalog:Record<string,string[]>; restocks:Record<string,number>};
+type Props = {week:string; catalog:Record<string,string[]>; restocks:Record<string,number>; onLoginRequired:()=>void};
 
-export default function FridgeSales({week,catalog,restocks}:Props) {
+export default function FridgeSales({week,catalog,restocks,onLoginRequired}:Props) {
  const [counts,setCounts]=useState<Counts>({});
  const [revision,setRevision]=useState<number|null>(null);
  const [message,setMessage]=useState(''),[busy,setBusy]=useState(false),[dirty,setDirty]=useState(false);
@@ -41,6 +41,7 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
   setBusy(true);
   try {
    const response=await fetch(endpoint);
+   if(response.status===401){onLoginRequired();return;}
    const data=await response.json();
    if(!response.ok)throw Error(data.error);
    setCounts(data.counts);setRevision(data.revision);setDirty(false);setMessage('');
@@ -53,6 +54,7 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
   event.preventDefault();setBusy(true);
   try {
    const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({counts,revision})});
+   if(response.status===401){onLoginRequired();return;}
    const data=await response.json();
    if(!response.ok)throw Error(data.error);
    setRevision(data.revision);setDirty(false);setMessage('Fridge counts saved.');
@@ -70,8 +72,7 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
  const all=groups.flatMap(group=>group.items);
  const revenue=(items:typeof all)=>items.reduce((sum,item)=>sum+(item.value??0),0);
  const sold=(items:typeof all)=>items.reduce((sum,item)=>sum+(item.sold??0),0);
- return <details style={{marginTop:20}}>
-  <summary><strong>Fridge Sales</strong></summary>
+ return <>
   <p>Enter opening and closing counts in individual cigarette packs, drinks, or snacks. Restocked counts convert units taken by Bourj Hammoud into individual items.</p>
   <form onSubmit={save}>
    <p><strong>{number.format(sold(all))} units sold · {number.format(revenue(all))} LBP in priced sales</strong></p>
@@ -103,7 +104,7 @@ export default function FridgeSales({week,catalog,restocks}:Props) {
     <span role="status">{message}</span>
    </div>
   </form>
- </details>;
+ </>;
 }
 
 function FragmentInput({field,name,value,disabled,restock,onChange}:{

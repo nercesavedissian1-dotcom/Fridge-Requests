@@ -8,3 +8,5 @@
 .historytoolbar{flex-wrap:wrap}.status-pending{background:#fff2cf;color:#947326}.status-refused{background:#f9e9e4;color:#a04d3b}.status-accepted{background:#e6f2e6;color:#356b3c}.requestdetail .decisionactions{display:flex;align-items:center;justify-content:flex-start;gap:10px;flex-wrap:wrap;padding-top:18px}.decisionactions button{padding:11px 16px;border-radius:6px;font-size:12px;font-weight:600}.decisionactions .accept{background:#2f5c43;color:white}.decisionactions .refuse{border:1px solid #d4aaa0;color:#a04d3b;background:#fff}.decisionactions span{font-size:10px;color:#87957d}.decisiontime{font-size:10px;color:#8a987f}
 
 .weekly-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:12px 0}.weekly-controls strong{font-size:12px}.weekly-summary th:not(:first-child),.weekly-summary td:not(:first-child){text-align:right}
+
+@media(max-width:600px){.sidebar nav{flex-wrap:wrap;justify-content:flex-start}}
