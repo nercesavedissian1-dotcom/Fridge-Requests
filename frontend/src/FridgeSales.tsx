@@ -17,7 +17,7 @@ const unitsPerRequest: Record<string,number> = {
  Weidmann:24, Rex:24, Almaza:24, 'Almaza 250 ml':24,
  Pepsi:24, '7Up':24, Mirinda:24, 'Dark Blue':24, 'Red Bull':24,
  Water:12, 'Ice Tea':6, 'Ice Coffee Red':24, 'Ice Coffee Black':24,
- 'Buz 10% White':6, 'Buz 10% Yellow':6, 'Buz Tin Red':6, 'Buz Tin Yellow':6,
+ 'Buz 10% White':6, 'Buz 10% Yellow':6, 'Buz Tin Red':24, 'Buz Tin Yellow':24,
  Snickers:24, Mars:24, Bounty:24, 'Choco Prince':24, Twix:24,
  'Sandwich Wafer Red':24, 'Sandwich Wafer Blue':24, 'Sandwich Wafer Black':24,
 };
