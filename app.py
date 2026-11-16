@@ -62,12 +62,22 @@ def submit():
  items=b.get('items');employee=b.get('employee');branch=b.get('branch');notes=b.get('notes','')
  if branch not in BRANCHES or not isinstance(employee,str) or not employee.strip() or len(employee)>100 or not isinstance(items,list) or not 1<=len(items)<=500 or not isinstance(notes,str) or len(notes)>1000:return jsonify(error='Please check your name, branch and selected items.'),400
  seen=set()
- catalog=catalog_data()
  for i in items:
-  if not isinstance(i,dict) or not isinstance(i.get('category'),str) or i.get('category') not in catalog or not isinstance(i.get('name'),str) or i.get('name') not in catalog[i['category']] or type(i.get('quantity')) is not int or not 1<=i['quantity']<=999 or i['name'] in seen:return jsonify(error='Check your selected items and quantities (1–999).'),400
+  if not isinstance(i,dict) or not isinstance(i.get('category'),str) or not isinstance(i.get('name'),str) or type(i.get('quantity')) is not int or not 1<=i['quantity']<=999 or i['name'] in seen:return jsonify(error='Check your selected items and quantities (1–999).'),400
   seen.add(i['name'])
  id=secrets.token_hex(16);created=datetime.now(ZoneInfo('UTC')).isoformat()
- with connect() as c:c.execute('INSERT INTO requests (id,branch,employee,createdAt,items,notes) VALUES (?,?,?,?,?,?)',(id,branch,employee.strip(),created,json.dumps(items),notes.strip()))
+ with connect() as c:
+  c.execute('BEGIN IMMEDIATE')
+  stock={(row['category'],row['name']):row['quantity'] for row in inventory_rows(c)}
+  for item in items:
+   available=stock.get((item['category'],item['name']))
+   if available is None:
+    return jsonify(error=f"{item['name']} is no longer available to request."),409
+   if available == 0:
+    return jsonify(error=f"{item['name']} is out of stock. Remove it and try again."),409
+   if item['quantity'] > available:
+    return jsonify(error=f"Only {available} of {item['name']} available. Reduce the requested quantity."),409
+  c.execute('INSERT INTO requests (id,branch,employee,createdAt,items,notes) VALUES (?,?,?,?,?,?)',(id,branch,employee.strip(),created,json.dumps(items),notes.strip()))
  return jsonify(id=id,createdAt=created,status='Pending'),201
 
 @app.get('/api/export')
@@ -127,13 +137,6 @@ with connect() as c:
 
 def now():return datetime.now(ZoneInfo('UTC')).isoformat()
 def inventory_rows(c):return [dict(r) for r in c.execute('SELECT * FROM inventory WHERE active=1 ORDER BY id')]
-def catalog_data():
- with connect() as c:
-  rows=inventory_rows(c)
- result={k:[] for k in CATALOG}
- for r in rows:result[r['category']].append(r['name'])
- return result
-
 def movement(c,token,row,kind,delta,before,after,branch='',employee='Owner',note='',reference=''):
  c.execute('INSERT INTO stock_movements VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(secrets.token_hex(16),token,row['id'],row['name'],row['category'],now(),kind,delta,before,after,branch,employee,note,reference))
 

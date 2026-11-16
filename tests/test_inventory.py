@@ -26,6 +26,19 @@ class ApprovalTests(unittest.TestCase):
   self.setqty(2);id=self.submit();self.assertEqual(self.item()['quantity'],2);self.assertEqual(self.status(id),'Pending')
   self.assertEqual(self.public.post(f'/api/requests/{id}/decision',json={'action':'accept'}).status_code,401)
   self.assertEqual(self.decision(id,'invalid').status_code,400);self.assertEqual(self.status(id),'Pending')
+ def test_submission_rejects_unavailable_stock_without_saving(self):
+  self.setqty(2)
+  count=len(self.owner.get('/api/requests').json)
+  payload=self.payload('Badaro')
+  payload['items'].append({'name':'Pepsi','category':'Drinks','quantity':1})
+  rejected=self.public.post('/api/requests',json=payload)
+  self.assertEqual(rejected.status_code,409)
+  self.assertIn('Pepsi is out of stock',rejected.json['error'])
+  rejected=self.public.post('/api/requests',json=self.payload(quantity=3))
+  self.assertEqual(rejected.status_code,409)
+  self.assertIn('Only 2',rejected.json['error'])
+  self.assertEqual(len(self.owner.get('/api/requests').json),count)
+  self.assertEqual(self.item()['quantity'],2)
  def test_accept_deducts_once(self):
   self.setqty(2);id=self.submit();a=self.decision(id);self.assertEqual(a.status_code,200);self.assertEqual(self.item()['quantity'],1);self.assertEqual(self.status(id),'Accepted')
   b=self.decision(id);self.assertEqual(b.json['decidedAt'],a.json['decidedAt']);self.assertEqual(self.item()['quantity'],1)
@@ -35,7 +48,7 @@ class ApprovalTests(unittest.TestCase):
   self.setqty(2);id=self.submit();self.assertEqual(self.decision(id,'refuse').status_code,200);self.assertEqual(self.item()['quantity'],2);self.assertEqual(self.status(id),'Refused')
   self.assertEqual(self.decision(id,'refuse').status_code,200);self.assertEqual(self.decision(id).status_code,409)
  def test_insufficient_stock_is_atomic_and_can_retry_after_delivery(self):
-  self.setqty(2);p=self.payload();p['items'].append({'name':'Pepsi','category':'Drinks','quantity':1});id=self.submit(p)
+  self.setqty(2);self.setqty(1,'Pepsi');p=self.payload();p['items'].append({'name':'Pepsi','category':'Drinks','quantity':1});id=self.submit(p);self.setqty(0,'Pepsi')
   self.assertEqual(self.decision(id).status_code,409);self.assertEqual(self.status(id),'Pending');self.assertEqual(self.item()['quantity'],2)
   self.setqty(1,'Pepsi');self.assertEqual(self.decision(id).status_code,200);self.assertEqual(self.item()['quantity'],1);self.assertEqual(self.item('Pepsi')['quantity'],0)
  def test_same_request_concurrent_accept(self):
@@ -63,7 +76,7 @@ class ApprovalTests(unittest.TestCase):
  def test_export_and_new_product(self):
   self.owner.post('/api/stock',json={'action':'new','category':'Snacks','name':'New Snack','quantity':5,'token':self.m.secrets.token_hex(16)})
   p=self.payload();p['items']=[{'name':'New Snack','category':'Snacks','quantity':2}];id=self.submit(p);self.assertEqual(self.decision(id).status_code,200);self.assertEqual(self.item('New Snack')['quantity'],3)
-  refused=self.submit();self.decision(refused,'refuse')
+  self.setqty(1);refused=self.submit();self.decision(refused,'refuse')
   w=load_workbook(io.BytesIO(self.owner.get('/api/export').data));self.assertEqual(w.sheetnames,self.m.BRANCHES+['Shared Stock','Stock Movements'])
   statuses=[r[9] for r in w['Bayada'].iter_rows(min_row=2,values_only=True)];self.assertIn('Accepted',statuses);self.assertIn('Refused',statuses);self.assertIn('Pending',statuses)
  def test_catalog_and_delivery_retry(self):
